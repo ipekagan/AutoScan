@@ -7,16 +7,19 @@ type State = 'upload' | 'preview' | 'scanning' | 'result';
 export default function Predict() {
   const [state, setState] = useState<State>('upload');
   const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [imgFile, setImgFile] = useState<File | null>(null);
   const [predClass, setPredClass] = useState<string | null>(null);
   const [confidence, setConfidence] = useState<number | null>(null);
-  const [probs, setProbs] = useState<number[] | null>(null);
+  const [probs, setProbs] = useState<Record<string, number> | null>(null);
   const [drag, setDrag] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = e => {
       setImgSrc(e.target?.result as string);
+      setImgFile(file);
       setState('preview');
     };
     reader.readAsDataURL(file);
@@ -28,39 +31,68 @@ export default function Predict() {
     if (file) handleFile(file);
   }, [handleFile]);
 
+  const saveToHistory = (prediction: string, conf: number) => {
+    try {
+      const existing = JSON.parse(localStorage.getItem('autoscan_history') ?? '[]');
+      existing.push({
+        prediction,
+        confidence: `${(conf * 100).toFixed(1)}%`,
+        time: new Date().toLocaleTimeString('tr-TR'),
+      });
+      localStorage.setItem('autoscan_history', JSON.stringify(existing));
+    } catch {}
+  };
+
   const handleClassify = async () => {
-    if (!imgSrc) return;
+    if (!imgSrc || !imgFile) return;
     setState('scanning');
+    setError(null);
 
-    // Model bağlantısı — backend hazır olunca açıklamaları kaldır
-    // try {
-    //   const res = await fetch('http://localhost:8000/predict', {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({ image: imgSrc }),
-    //   });
-    //   const data = await res.json();
-    //   setPredClass(data.class);
-    //   setConfidence(data.confidence);
-    //   setProbs(data.probabilities);
-    // } catch (e) { console.error(e); }
+    const startTime = Date.now();
 
-    await new Promise(r => setTimeout(r, 2000));
-    setPredClass(null); setConfidence(null); setProbs(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', imgFile);
+
+      const res = await fetch('http://localhost:8000/predict', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error('Sunucu hatası');
+
+      const data = await res.json();
+      setPredClass(data.class);
+      setConfidence(data.confidence);
+      setProbs(data.probabilities);
+      saveToHistory(data.class, data.confidence);
+    } catch (e) {
+      setError('Backend bağlantısı kurulamadı. Backend çalışıyor mu?');
+      setPredClass(null);
+      setConfidence(null);
+      setProbs(null);
+    }
+
+    const elapsed = Date.now() - startTime;
+    if (elapsed < 3000) {
+      await new Promise(r => setTimeout(r, 3000 - elapsed));
+    }
+
     setState('result');
   };
 
   const handleReset = () => {
-    setState('upload'); setImgSrc(null);
-    setPredClass(null); setConfidence(null); setProbs(null);
+    setState('upload'); setImgSrc(null); setImgFile(null);
+    setPredClass(null); setConfidence(null); setProbs(null); setError(null);
   };
 
   return (
     <>
       <div className="page-title">Sınıflandır</div>
-      <p className="page-sub">Bir araç görseli yükleyin ve türünü öğrenin.</p>
+      {state !== 'result' && (
+        <p className="page-sub">Bir araç görseli yükleyin ve türünü öğrenin.</p>
+      )}
 
-      {/* UPLOAD */}
       {state === 'upload' && (
         <div
           className={`upload-area${drag ? ' drag-over' : ''}`}
@@ -76,7 +108,6 @@ export default function Predict() {
         </div>
       )}
 
-      {/* PREVIEW */}
       {state === 'preview' && imgSrc && (
         <>
           <div style={{ display: 'flex', justifyContent: 'center', margin: '1.2rem 0' }}>
@@ -89,7 +120,6 @@ export default function Predict() {
         </>
       )}
 
-      {/* SCANNING */}
       {state === 'scanning' && imgSrc && (
         <div style={{ display: 'flex', justifyContent: 'center', margin: '1.5rem 0' }}>
           <div className="scan-box">
@@ -103,15 +133,18 @@ export default function Predict() {
         </div>
       )}
 
-      {/* RESULT */}
       {state === 'result' && imgSrc && (
         <>
           <div className="result-grid">
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
-              <img src={imgSrc} alt="result" style={{ maxHeight: 280, maxWidth: '100%', borderRadius: 14, boxShadow: '0 6px 24px rgba(0,0,0,0.08)' }} />
+              <img src={imgSrc} alt="result" style={{ maxHeight: 320, maxWidth: '100%', borderRadius: 14, boxShadow: '0 6px 24px rgba(0,0,0,0.08)' }} />
             </div>
             <div>
-              {predClass ? (
+              {error ? (
+                <div className="result-card">
+                  <div className="no-model">{error}</div>
+                </div>
+              ) : predClass ? (
                 <>
                   <div className="result-card">
                     <div className="result-label">Tahmin</div>
@@ -120,11 +153,13 @@ export default function Predict() {
                   </div>
                   {probs && (
                     <div className="bar-section">
-                      {CLASS_NAMES.map((name, i) => (
+                      {CLASS_NAMES.map((name) => (
                         <div key={name} className="bar-row">
                           <div className="bar-name">{name}</div>
-                          <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.round(probs[i] * 100)}%` }} /></div>
-                          <div className="bar-pct">{Math.round(probs[i] * 100)}%</div>
+                          <div className="bar-track">
+                            <div className="bar-fill" style={{ width: `${Math.round((probs[name] ?? 0) * 100)}%` }} />
+                          </div>
+                          <div className="bar-pct">{Math.round((probs[name] ?? 0) * 100)}%</div>
                         </div>
                       ))}
                     </div>

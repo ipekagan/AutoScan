@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </nav>
           </aside>
           <main className="main">
-            <div className={pathname === "/" ? "main-inner-full" : "main-inner"}>{children}</div>
+            <div className={pathname === "/" || pathname === "/predict" ? "main-inner-full" : "main-inner"}>{children}</div>
           </main>
         </div>
       </body>

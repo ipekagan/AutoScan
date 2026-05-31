@@ -1,15 +1,22 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 type HistoryItem = { prediction: string; confidence: string; time: string };
 
-// Geçici global store — sonra context ile değiştirilebilir
-declare global { interface Window { __history?: HistoryItem[] } }
-
 export default function History() {
-  const [history] = useState<HistoryItem[]>(
-    typeof window !== 'undefined' ? (window.__history ?? []) : []
-  );
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('autoscan_history') ?? '[]');
+      setHistory(stored);
+    } catch {}
+  }, []);
+
+  const handleClear = () => {
+    localStorage.removeItem('autoscan_history');
+    setHistory([]);
+  };
 
   return (
     <>
@@ -22,15 +29,20 @@ export default function History() {
           Henüz tahmin yapılmadı.
         </div>
       ) : (
-        history.slice().reverse().map((item, i) => (
-          <div key={i} className="history-item">
-            <div className="history-class">{item.prediction}</div>
-            <div>
-              <div className="history-conf">{item.confidence}</div>
-              <div className="history-time">{item.time}</div>
-            </div>
+        <>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+            <button className="btn-secondary" onClick={handleClear}>Geçmişi Temizle</button>
           </div>
-        ))
+          {history.slice().reverse().map((item, i) => (
+            <div key={i} className="history-item">
+              <div className="history-class">{item.prediction}</div>
+              <div>
+                <div className="history-conf">{item.confidence}</div>
+                <div className="history-time">{item.time}</div>
+              </div>
+            </div>
+          ))}
+        </>
       )}
     </>
   );
